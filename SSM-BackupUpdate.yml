@@ -1,0 +1,158 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description:  >-
+  1. DescribeInstances
+  2. Stop Instance
+  3. Backup AMI
+  4. Start Instance
+  5. Update OS
+  6. Stop Instance
+
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: ac
+  Environment:
+    Type: String
+    Default: dev
+
+
+Resources:
+
+  IAMRoleForSSM:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ssm-document
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ssm.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ec2execute
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'ec2:*'
+                Resource:
+                  - '*'
+        - PolicyName: ssmexec
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'ssm:*'
+                Resource:
+                  - '*'
+
+  BackupAmiDocument:
+    Type: AWS::SSM::Document
+    Properties:
+      DocumentType: Automation
+      Tags:
+        - Key: 'Name'
+          Value: !Sub ${ProjectName}-${Environment}
+        - Key: 'Project'
+          Value: !Ref ProjectName
+        - Key: 'Environment'
+          Value: !Ref Environment
+      Content:
+        description: Backup AMI
+        schemaVersion: '0.3'
+        assumeRole: !GetAtt IAMRoleForSSM.Arn
+        mainSteps:
+        - name: getInstanceId
+          action: aws:executeAwsApi
+          onFailure: Abort
+          inputs:
+            Service: ec2
+            Api: DescribeInstances
+            Filters:
+            - Name: "tag:Project"
+              Values: [ "ac" ]
+            - Name: "tag:Environment"
+              Values: [ "dev" ]
+            - Name: "instance-state-name"
+              Values: [ "running", "stopped" ]
+          outputs:
+          - Name: InstanceId
+            Selector: "$.Reservations..Instances..InstanceId"
+            Type: StringList
+        - name: StopInstance
+          action: aws:executeAutomation
+          onFailure: Abort
+          inputs:
+            DocumentName: AWS-StopEC2Instance
+            RuntimeParameters:
+              InstanceId: "{{getInstanceId.InstanceId}}"
+        - name: createImage
+          action: aws:createImage
+          maxAttempts: 3
+          onFailure: Abort
+          inputs:
+            InstanceId: "{{getInstanceId.InstanceId}}"
+            ImageName: 'backup_{{getInstanceId.InstanceId}}_{{ global:DATE_TIME }}-cm'
+            NoReboot: true
+            ImageDescription: 'Created by ASM on {{ global:DATE_TIME }} UTC from {{getInstanceId.InstanceId}}'
+        - name: StartInstance
+          action: aws:executeAutomation
+          onFailure: Abort
+          inputs:
+            DocumentName: AWS-StartEC2Instance
+            RuntimeParameters:
+              InstanceId: "{{getInstanceId.InstanceId}}"
+        - name: runPatchBaseline
+          action: aws:runCommand
+          maxAttempts: 1
+          onFailure: Abort
+          inputs:
+            DocumentName: AWS-RunPatchBaseline
+            InstanceIds:
+            - "{{getInstanceId.InstanceId}}"
+            Parameters:
+              Operation: Install
+        - name: StopInstance2
+          action: aws:executeAutomation
+          onFailure: Abort
+          inputs:
+            DocumentName: AWS-StopEC2Instance
+            RuntimeParameters:
+              InstanceId: "{{getInstanceId.InstanceId}}"
+
+  WindowsPatchBaseline:
+      Type: AWS::SSM::PatchBaseline
+      Properties:
+        Name: windows-patch-baseline
+        OperatingSystem: WINDOWS
+        Description: Patch baseline
+        PatchGroups:
+          - windows-patch-baseline
+        GlobalFilters:
+          PatchFilters:
+            - Key: PRODUCT
+              Values:
+                - "*"
+        ApprovalRules:
+          PatchRules:
+            - PatchFilterGroup:
+                PatchFilters:
+                  - Key: CLASSIFICATION
+                    Values:
+                      - CriticalUpdates
+                      - DefinitionUpdates
+                      - SecurityUpdates
+                      - Updates
+                  - Key: MSRC_SEVERITY
+                    Values:
+                      - Critical
+                      - Important
+              ApproveAfterDays: 7
+              ComplianceLevel: UNSPECIFIED
+              EnableNonSecurity: false
+        ApprovedPatchesComplianceLevel: UNSPECIFIED
+
