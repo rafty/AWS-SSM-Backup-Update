@@ -60,7 +60,7 @@ $ aws cloudformation create-stack \
 ## How to use  
 - Select and execute the created Document from the SSM Management Console Document.
 
-- OS Updateする対象のインスタンスを追加するには、インスタンスに以下のTagを設定する。  
+- To add an instance whose OS is to be updated, set the following Tag in the instance.  
 "Project": "ac"  
 "Environment": "dev"  
 "Patch Group": 'windows-patch-baseline'  
