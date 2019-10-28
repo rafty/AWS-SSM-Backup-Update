@@ -155,4 +155,3 @@ Resources:
               ComplianceLevel: UNSPECIFIED
               EnableNonSecurity: false
         ApprovedPatchesComplianceLevel: UNSPECIFIED
-
